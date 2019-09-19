@@ -136,6 +136,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="TestAny.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="any.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include=".clang-tidy" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
