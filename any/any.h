@@ -264,14 +264,14 @@ inline T any_cast(const any& operand)
 {
 	static_assert(std::is_constructible_v<T, const std::_Remove_cvref_t<T>&>);
 
-	const auto ptr = static_cast<T>(*any_cast<std::_Remove_cvref_t<T>>(&operand));
+	const auto ptr = static_cast<T>(any_cast<std::_Remove_cvref_t<T>>(&operand));
 
 	if (!ptr)
 	{
 		throw bad_any_cast({});
 	}
 
-	return static_cast<T>(ptr);
+	return static_cast<T>(*ptr);
 }
 
 template<class T>
@@ -279,14 +279,14 @@ inline T any_cast(any& operand)
 {
 	static_assert(std::is_constructible_v<T, std::_Remove_cvref_t<T>&>);
 
-	auto ptr = static_cast<T>(*any_cast<std::_Remove_cvref_t<T>>(&operand));
+	auto ptr = static_cast<T*>(any_cast<std::_Remove_cvref_t<T>>(&operand));
 
 	if (!ptr)
 	{
 		throw bad_any_cast({});
 	}
 
-	return static_cast<T>(ptr);
+	return *ptr;
 }
 
 template<class T>
@@ -294,14 +294,14 @@ inline T any_cast(any&& operand)
 {
 	static_assert(std::is_constructible_v<T, std::_Remove_cvref_t<T>>);
 
-	const auto ptr = static_cast<T>(*any_cast<std::_Remove_cvref_t<T>>(&operand));
+	const auto ptr = static_cast<T>(any_cast<std::_Remove_cvref_t<T>>(&operand));
 
 	if (!ptr)
 	{
 		throw bad_any_cast({});
 	}
 
-	return static_cast<T>(std::move(ptr));
+	return static_cast<T>(std::move(*ptr));
 }
 
 template<class T>
