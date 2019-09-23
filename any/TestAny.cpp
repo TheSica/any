@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "any.h"
 #include <numeric>
+#include <any>
+#include "TestObject.h"
 
 /*
 enum operation
@@ -227,13 +229,22 @@ TEST(CtorTests, GivenEmptyAny_DefaultConstructorWorks)
 	EXPECT_FALSE(a.has_value());
 }
 
-TEST(CtorTests, GiveTestObject_CtorsAndDtorsAreCalledForSmallObject)
+TEST(CtorTests, GivenSmallTestObject_CtorsAndDtorsAreCalledForSmallObject)
 {
 	SmallTestObject::Reset();
 	{
-		//any a {SmallTestObject()};
+		any a{ SmallTestObject() };
 	}
 	EXPECT_TRUE(SmallTestObject::IsClear());
+}
+
+TEST(CtorTests, GivenTestObject_CtorsAndDtorsAreCalled)
+{
+	TestObject::Reset();
+	{
+		any a {TestObject()};
+	}
+	EXPECT_TRUE(TestObject::IsClear());
 }
 
 TEST(CtorTests, GivenNonEmptyAny_HasValue)
@@ -241,4 +252,26 @@ TEST(CtorTests, GivenNonEmptyAny_HasValue)
 	any a(42);
 
 	EXPECT_TRUE(a.has_value());
+}
+
+TEST(AnyCasts, GivenNonEmptyAny_AnyCastReturnsExpectedValue)
+{
+	any a(42);
+
+	EXPECT_EQ(any_cast<int>(a), 42);
+}
+
+TEST(AnyCasts, GivenNonEmptyAny_AnyCastHoldsExpectedValue)
+{
+	any a(42);
+	
+	EXPECT_NE(any_cast<int>(a), 1337);
+}
+
+TEST(AnyCasts, T)
+{
+	any a(42);
+
+	any_cast<int&>(a) = 10;
+	EXPECT_EQ(any_cast<int>(a), 10);
 }

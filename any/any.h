@@ -15,6 +15,14 @@ class bad_any_cast : public std::bad_cast
 class any
 {
 private:
+
+	template <class T> friend const T* any_cast(const any* operand) noexcept;
+	template <class T> friend T* any_cast(any* operand) noexcept;
+	template <class T> friend T any_cast(const any& operand);
+	template <class T> friend T any_cast(any& operand);
+	template <class T> friend T any_cast(any&& operand);
+
+
 	enum operation
 	{
 		Get,
@@ -35,40 +43,57 @@ private:
 	};
 
 	template <typename T>
+	using use_internal_storage = std::bool_constant<
+		std::is_nothrow_move_constructible_v<T> &&
+		(sizeof(T) <= sizeof(storage)) &&
+		(std::alignment_of_v<storage> % std::alignment_of_v<T> == 0)>;
+
+	template <typename T>
 	struct handler
 	{
 		template<typename V>
-		static void Construct(storage& strg, V&& v)
+		static void Construct(storage& strg, V&& v, std::true_type)
 		{
-			if constexpr (std::is_trivially_constructible_v<T>)
-			{
-				new(&strg.internal_storage) T(std::forward<V>(v));
-			}
-			else
-			{
-				strg.external_storage = static_cast<T*>(_aligned_malloc(sizeof(T), alignof(T)));
-
-				new(strg.external_storage) T(std::forward<V>(v));
-			}
+			new(&strg.internal_storage) T(std::forward<V>(v));
 		}
 
-		static void Destroy(any& rAny)
+		template<typename V>
+		static void Construct(storage& strg, V&& v, std::false_type)
+		{
+			strg.external_storage = static_cast<T*>(_aligned_malloc(sizeof(T), alignof(T)));
+
+			new(strg.external_storage) T(std::forward<V>(v));
+		}
+
+		static void Destroy(any& rAny, std::true_type)
 		{
 			if constexpr (!std::is_trivially_constructible_v<T>)
 			{
-				std::destroy_at(rAny._storage.external_storage);
+				auto t = static_cast<T*>(static_cast<void*>(&rAny._storage.internal_storage));
+				t->~T();
 			}
+		}
+
+		static void Destroy(any& rAny, std::false_type)
+		{
+			if constexpr (!std::is_trivially_constructible_v<T>)
+			{
+				auto t = static_cast<T*>(rAny._storage.external_storage);
+				t->~T();
+			}
+
+			_aligned_free(rAny._storage.external_storage);
 		}
 
 		static void Copy(const any& srcAny, any& destAny)
 		{
 			if constexpr (std::is_trivially_constructible_v<T>)
 			{
-				Construct(destAny._storage, *(T*)(&srcAny._storage.internal_storage));
+				Construct(destAny._storage, *(T*)(&srcAny._storage.internal_storage), use_internal_storage<T>{});
 			}
 			else
 			{
-				Construct(destAny._storage, *static_cast<T*>(srcAny._storage.external_storage));
+				Construct(destAny._storage, *static_cast<T*>(srcAny._storage.external_storage), use_internal_storage<T>{});
 			}
 		}
 
@@ -76,11 +101,11 @@ private:
 		{
 			if constexpr (std::is_trivially_constructible_v<T>)
 			{
-				Construct(destAny._storage, std::move(*(T*)(&srcAny._storage.internal_storage)));
+				Construct(destAny._storage, std::move(*(T*)(&srcAny._storage.internal_storage)), use_internal_storage<T>{});
 			}
 			else
 			{
-				Construct(destAny._storage, std::move(*(T*)(srcAny._storage.external_storage)));
+				Construct(destAny._storage, std::move(*(T*)(srcAny._storage.external_storage)), use_internal_storage<T>{});
 			}
 		}
 
@@ -106,18 +131,19 @@ private:
 			switch (op)
 			{
 			case operation::Get:
-				return handler<decltype(pThis->type().name())>().GetStorage(*pThis);
+				return handler<T>().GetStorage(*pThis);
 				break;
 			case operation::Destroy:
-				handler<decltype(pThis->type().name())>().Destroy(*const_cast<any*>(pThis));
+				handler<T>().Destroy(*const_cast<any*>(pThis), use_internal_storage<T>{});
 				break;
 			case operation::Copy:
-				handler<decltype(pThis->type().name())>().Copy(*pThis, *pOther);
+				handler<T>().Copy(*pThis, *pOther);
 				break;
 			case operation::Move:
-				handler<decltype(pThis->type().name())>().Move(*pThis, *pOther);
+				handler<T>().Move(*pThis, *pOther);
 				break;
 			case operation::TypeInfo:
+				return (void*) & typeid(T);
 				break;
 			}
 		}
@@ -151,28 +177,37 @@ public:
 		if (other.has_value())
 		{
 			other._handler_func(operation::Move, &other, this);
-			_handler_func =  std::move(other._handler_func);
+			_handler_func = std::move(other._handler_func);
 		}
 	}
 
-	template<class T>
-	any(T&& value, std::enable_if_t<!std::is_same_v<std::decay_t<T>, any>>)
+	template<class T, typename = std::enable_if_t<!std::is_same_v<std::decay_t<T>, any>&& std::is_copy_constructible_v<std::decay_t<T>>>>
+	any(T&& value)
 	{
-		handler<T>().Construct(_storage, std::forward<T>(value));
+		handler<T>().Construct(_storage, std::forward<T>(value), use_internal_storage<T>{});
 		_handler_func = &handler<T>::handler_func;
 	}
 
 	template<class T, class... Args, typename = std::enable_if_t<std::conjunction_v<
-									 std::is_copy_constructible<std::decay_t<T>>, 
-									 std::is_constructible<std::decay_t<T>, Args...>>>>
-		explicit any(std::in_place_type_t<T>, Args&& ...)
+		std::is_copy_constructible<std::decay_t<T>>,
+		std::is_constructible<std::decay_t<T>, Args...>>>>
+		explicit any(std::in_place_type_t<T>, Args && ...args)
 	{
-
+		handler<T>().Construct(_storage, std::forward<Args>(args)...);
 	}
-	template<class T, class U, class...Args>
-	explicit any(std::in_place_type_t<T>, std::initializer_list<U>, Args&& ...) = delete; //might not do
 
-	~any() = default;
+	template<class T, class U, class...Args, typename = std::enable_if_t<std::conjunction_v<
+		std::is_copy_constructible<std::decay_t<T>>,
+		std::is_constructible<std::decay_t<T>, std::initializer_list<U>&, Args...>>>>
+		explicit any(std::in_place_type_t<T>, std::initializer_list<U> il, Args && ...args)
+	{
+		emplace(il, std::forward<Args>(args)...);
+	}
+
+	~any()
+	{
+		reset();
+	}
 
 	any& operator=(const any& rhs);
 	any& operator=(any&& rhs) noexcept;
@@ -182,13 +217,23 @@ public:
 	template<class T, class... Args>
 	void emplace(Args&& ...args)
 	{
-		handler<T>().Construct(_storage, std::forward<Args>(args)...);
+		handler<T>().Construct(_storage, std::forward<Args>(args)..., use_internal_storage<T>{});
 		_handler_func = &handler<T>::handler_func;
 	}
 
 	template<class T, class U, class... Args>
 	std::decay_t<T>& emplace(std::initializer_list<U>, Args&& ...) = delete;
-	void reset() noexcept = delete;
+
+	void reset() noexcept
+	{
+		if (has_value())
+		{
+			_handler_func(operation::Destroy, this, nullptr);
+
+			_handler_func = nullptr;
+		}
+	}
+
 	void swap(any& rhs) noexcept = delete;
 
 	bool has_value() const noexcept
@@ -196,19 +241,16 @@ public:
 		return _handler_func != nullptr;
 	}
 
-	const std::type_info& type() const noexcept;
-
-	template<class ValueType>
-	const ValueType* any_cast(const any* pAny)
+	const std::type_info& type() const noexcept
 	{
-		if constexpr (std::is_trivially_constructible_v<ValueType>)
+		if (_handler_func)
 		{
-			auto get = (void*)(&pAny->_storage.internal_storage);
-			return static_cast<const ValueType*>(get);
+			auto* pTypeInfo = _handler_func(operation::TypeInfo, this, nullptr);
+			return *static_cast<const std::type_info*>(pTypeInfo);
 		}
 		else
 		{
-			return static_cast<const ValueType*>(pAny->_storage.external_storage);
+			return typeid(void);
 		}
 	}
 
@@ -216,3 +258,70 @@ private:
 	storage _storage;
 	void* (*_handler_func)(operation, const any*, any*) = nullptr;
 };
+
+template<class T>
+inline T any_cast(const any& operand)
+{
+	static_assert(std::is_constructible_v<T, const std::_Remove_cvref_t<T>&>);
+
+	const auto ptr = static_cast<T>(*any_cast<std::_Remove_cvref_t<T>>(&operand));
+
+	if (!ptr)
+	{
+		throw bad_any_cast({});
+	}
+
+	return static_cast<T>(ptr);
+}
+
+template<class T>
+inline T any_cast(any& operand)
+{
+	static_assert(std::is_constructible_v<T, std::_Remove_cvref_t<T>&>);
+
+	auto ptr = static_cast<T>(*any_cast<std::_Remove_cvref_t<T>>(&operand));
+
+	if (!ptr)
+	{
+		throw bad_any_cast({});
+	}
+
+	return static_cast<T>(ptr);
+}
+
+template<class T>
+inline T any_cast(any&& operand)
+{
+	static_assert(std::is_constructible_v<T, std::_Remove_cvref_t<T>>);
+
+	const auto ptr = static_cast<T>(*any_cast<std::_Remove_cvref_t<T>>(&operand));
+
+	if (!ptr)
+	{
+		throw bad_any_cast({});
+	}
+
+	return static_cast<T>(std::move(ptr));
+}
+
+template<class T>
+inline const T* any_cast(const any* operand) noexcept
+{
+	if (operand != nullptr && operand->type() == typeid(T) /*&& operand->has_value()*/)
+	{
+		return static_cast<T*>(operand->_handler_func(any::operation::Get, operand, nullptr));
+	}
+
+	return nullptr;
+}
+
+template<class T>
+inline T* any_cast(any* operand) noexcept
+{
+	if (operand != nullptr && operand->type() == typeid(T) /*&& operand->has_value()*/)
+	{
+		return static_cast<T*>(operand->_handler_func(any::operation::Get, operand, nullptr));
+	}
+
+	return nullptr;
+}
