@@ -242,9 +242,20 @@ TEST(CtorTests, GivenTestObject_CtorsAndDtorsAreCalled)
 {
 	TestObject::Reset();
 	{
-		any a {TestObject()};
+		any a{ TestObject() };
 	}
 	EXPECT_TRUE(TestObject::IsClear());
+}
+
+TEST(CtorTests, GivenNonEmptyAny_SmallRepresentationCastToBigRepresentationWorks)
+{
+	any intAny = 3333u;
+
+	EXPECT_EQ(any_cast<unsigned>(intAny), 3333u);
+
+	intAny = TestObject(33333);
+
+	EXPECT_EQ(any_cast<TestObject>(intAny).mX, 33333);
 }
 
 TEST(CtorTests, GivenNonEmptyAny_HasValue)
@@ -252,6 +263,16 @@ TEST(CtorTests, GivenNonEmptyAny_HasValue)
 	any a(42);
 
 	EXPECT_TRUE(a.has_value());
+}
+
+TEST(CtorTests, GivenNonEmptyAny_EqualsOperatorWorks)
+{
+	any a1 = 42;
+	any a2 = a1;
+
+	EXPECT_TRUE(a1.has_value());
+	EXPECT_TRUE(a2.has_value());
+	EXPECT_EQ(any_cast<int>(a1), any_cast<int>(a2));
 }
 
 TEST(AnyCasts, GivenNonEmptyAny_AnyCastReturnsExpectedValue)
@@ -264,14 +285,128 @@ TEST(AnyCasts, GivenNonEmptyAny_AnyCastReturnsExpectedValue)
 TEST(AnyCasts, GivenNonEmptyAny_AnyCastHoldsExpectedValue)
 {
 	any a(42);
-	
+
 	EXPECT_NE(any_cast<int>(a), 1337);
 }
 
-TEST(AnyCasts, T)
+TEST(AnyCasts, GivenNonEmptyAny_AnyCastingModifiesTheValue)
 {
 	any a(42);
 
 	any_cast<int&>(a) = 10;
 	EXPECT_EQ(any_cast<int>(a), 10);
+}
+
+TEST(AnyCasts, GivenNonEmptyFloatAny_AnyCastingModifiesTheValue)
+{
+	any a(1.f);
+
+	any_cast<float&>(a) = 1337.f;
+	EXPECT_EQ(any_cast<float>(a), 1337.f);
+}
+
+TEST(AnyCasts, GivenNonEmptyStringAny_AnyCastingModifiesTheValue)
+{
+	any a(std::string("hello world"));
+
+	EXPECT_EQ(any_cast<std::string>(a), "hello world");
+	EXPECT_EQ(any_cast<std::string&>(a), "hello world");
+}
+
+TEST(AnyCasts, GivenNonEmptyCustomType_AnyCastingModifiesTheValue)
+{
+	struct custom_type { int data; };
+
+	any a = custom_type{};
+	any_cast<custom_type&>(a).data = 42;
+	EXPECT_EQ(any_cast<custom_type>(a).data, 42);
+}
+
+TEST(AnyCasts, GivenNonEmptyAny_AnyCastingToDifferentTypeThrows)
+{
+	any a = 42;
+	EXPECT_EQ(any_cast<int>(a), 42);
+
+	EXPECT_ANY_THROW((any_cast<short>(a), 42));
+}
+
+TEST(AnyCasts, GivenNonEmptyAnyVector_AnyCastsSuccessfullyToExpectedTypes)
+{
+	std::vector<any> va = { 42, 'a', 42.f, 3333u, 4444ul, 5555ull, 6666.0, std::string("dolhasca") };
+
+	EXPECT_EQ(any_cast<int>(va[0]), 42);
+	EXPECT_EQ(any_cast<char>(va[1]), 'a');
+	EXPECT_EQ(any_cast<float>(va[2]), 42.f);
+	EXPECT_EQ(any_cast<unsigned>(va[3]), 3333u);
+	EXPECT_EQ(any_cast<unsigned long>(va[4]), 4444ul);
+	EXPECT_EQ(any_cast<unsigned long long>(va[5]), 5555ull);
+	EXPECT_EQ(any_cast<double>(va[6]), 6666.0);
+	EXPECT_EQ(any_cast<std::string>(va[7]), "dolhasca");
+}
+
+TEST(AnyCasts, GivenEmptyAnyVector_AnyCastsSuccessfulyAfterPushBack)
+{
+	std::vector<any> va;
+	va.push_back(42);
+	va.push_back(std::string("rob"));
+	va.push_back('a');
+	va.push_back(42.f);
+
+	EXPECT_EQ(any_cast<int>(va[0]) , 42);
+	EXPECT_EQ(any_cast<std::string>(va[1]) , "rob");
+	EXPECT_EQ(any_cast<char>(va[2]) , 'a');
+	EXPECT_EQ(any_cast<float>(va[3]) , 42.f);
+}
+
+TEST(AnyCasts, GivenSmallAnyObject_ReplacingItWithALargerOneDoesntCorrputTheSurroundingMemory)
+{
+	TestObject::Reset();
+	{
+		std::vector<any> va = { 42, 'a', 42.f, 3333u, 4444ul, 5555ull, 6666.0 };
+
+		EXPECT_EQ(any_cast<int>(va[0]) , 42);
+		EXPECT_EQ(any_cast<char>(va[1]) , 'a');
+		EXPECT_EQ(any_cast<float>(va[2]) , 42.f);
+		EXPECT_EQ(any_cast<unsigned>(va[3]) , 3333u);
+		EXPECT_EQ(any_cast<unsigned long>(va[4]) , 4444ul);
+		EXPECT_EQ(any_cast<unsigned long long>(va[5]) , 5555ull);
+		EXPECT_EQ(any_cast<double>(va[6]) , 6666.0);
+
+		va[3] = TestObject(3333); // replace a small integral with a large heap allocated object.
+
+		EXPECT_EQ(any_cast<int>(va[0]) , 42);
+		EXPECT_EQ(any_cast<char>(va[1]) , 'a');
+		EXPECT_EQ(any_cast<float>(va[2]) , 42.f);
+		EXPECT_EQ(any_cast<TestObject>(va[3]).mX , 3333); // not 3333u because TestObject ctor takes a signed type.
+		EXPECT_EQ(any_cast<unsigned long>(va[4]) , 4444ul);
+		EXPECT_EQ(any_cast<unsigned long long>(va[5]) , 5555ull);
+		EXPECT_EQ(any_cast<double>(va[6]) , 6666.0);
+	}
+}
+
+TEST(EmplaceTests, GivenEmptyAny_EmplacingSmallObjectsWorks)
+{
+	any a;
+
+	a.emplace<int>(42);
+	EXPECT_TRUE(a.has_value());
+	EXPECT_EQ(any_cast<int>(a), 42);
+
+	a.emplace<short>((short)8); // no way to define a short literal we must cast here.
+	EXPECT_EQ(any_cast<short>(a), 8);
+	EXPECT_TRUE(a.has_value());
+
+	a.reset();
+	EXPECT_FALSE(a.has_value());
+}
+
+TEST(EmplaceTests, GivenEmptyAny_EmplacingLargeObjectsWorks)
+{
+	TestObject::Reset();
+	{
+		any a;
+		a.emplace<TestObject>();
+		EXPECT_TRUE(a.has_value());
+	}
+	EXPECT_TRUE(TestObject::IsClear());
 }
