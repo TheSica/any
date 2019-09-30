@@ -97,8 +97,7 @@ class any
 {
 public:
 	constexpr any() noexcept
-		:_storage{},
-		_representation{}
+		:_storage{}
 	{
 	}
 
@@ -115,7 +114,7 @@ public:
 		{
 		case any_representation::Big:
 			_storage = other._storage;
-			other._storage.big_storage._big_handler->_destroy(nullptr);
+			//other._storage.big_storage._big_handler->_copy;
 			break;
 		case any_representation::Small:
 			break;
@@ -156,20 +155,27 @@ public:
 private:
 	any_representation _representation;
 
-	union storage
+	struct big_storage_t
 	{
-		struct big_storage
-		{
-			void* _big_storage = nullptr;
-			any_big* _big_handler;
-		}big_storage;
+		void* _big_storage = nullptr;
+		any_big* _big_handler;
+	};
 
-		struct small_storage
+	typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
+	struct small_storage_t
+	{
+		internal_storage_t _small_storage;
+		any_small* _small_handler;
+	};
+
+	struct storage
+	{
+		union
 		{
-			typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
-			internal_storage_t _small_storage;
-			any_small* _small_handler;
-		}small_storage;
+			internal_storage_t trivial_storage;
+			big_storage_t big_storage;
+			small_storage_t small_storage;
+		};
 	};
 
 	storage _storage;
