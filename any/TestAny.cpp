@@ -197,7 +197,7 @@ public:
 
 private:
 	storage _storage; */
-
+/*
 struct SmallTestObject
 {
 	static int mCtorCount;
@@ -410,3 +410,4 @@ TEST(EmplaceTests, GivenEmptyAny_EmplacingLargeObjectsWorks)
 	}
 	EXPECT_TRUE(TestObject::IsClear());
 }
+*/

@@ -23,10 +23,13 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="any.h">
+    <ClInclude Include="TestObject.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="TestObject.h">
+    <ClInclude Include="anyold.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="any.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
