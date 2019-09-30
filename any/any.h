@@ -26,23 +26,16 @@ constexpr size_t small_space_size = 4 * sizeof(void*);
 
 template<class T>
 using any_is_trivial = std::bool_constant<std::is_trivially_copyable_v<T> // Check if alignment is necessary
-										&& sizeof(T) <= small_space_size
-										&& alignof(T) <= alignof(void*)>;
+	&& sizeof(T) <= small_space_size
+	&& alignof(T) <= alignof(void*)>;
 
 template<class T>
 using any_is_small = std::bool_constant<sizeof(T) <= small_space_size
-									 && alignof(T) <= alignof(void*)>; // Check if alignment is necessary
+	&& alignof(T) <= alignof(void*)>; // Check if alignment is necessary
 
 typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
 
-struct storage
-{
-	typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
 
-	void* big_storage = nullptr;
-	internal_storage_t small_storage;
-	internal_storage_t trivial_storage;
-};
 
 enum class any_representation
 {
@@ -66,7 +59,7 @@ struct any_big
 	}
 
 	void (*_destroy)(void*);
-	void (*_copy)(const void *);
+	void (*_copy)(const void*);
 };
 
 struct any_small
@@ -95,23 +88,23 @@ struct any_small
 };
 
 template<class T>
-any_big any_big_obj = {&any_big::Destroy<T>, &any_big::Copy<T>};
+any_big any_big_obj = { &any_big::Destroy<T>, &any_big::Copy<T> };
 
 template<class T>
-any_small any_small_obj = {&any_small::Destroy<T>, &any_small::Copy<T>, &any_small::Move<T>};
+any_small any_small_obj = { &any_small::Destroy<T>, &any_small::Copy<T>, &any_small::Move<T> };
 
 class any
 {
 public:
 	constexpr any() noexcept
-	:_storage{},
-	 _representation{}
+		:_storage{},
+		_representation{}
 	{
 	}
 
 	any(const any& other)
-	:_storage{},
-	 _representation{}
+		:_storage{},
+		_representation{}
 	{
 		if (!other.has_value())
 		{
@@ -120,13 +113,14 @@ public:
 
 		switch (other._representation)
 		{
-			case any_representation::Big:
-				_storage = static_cast<void*>(_aligned_malloc(sizeof(other.type()), alignof(other.type())));
-				break;
-			case any_representation::Small:
-				break;
-			case any_representation::Trivial:
-				break;
+		case any_representation::Big:
+			_storage = other._storage;
+			other._storage.big_storage._big_handler->_destroy(nullptr);
+			break;
+		case any_representation::Small:
+			break;
+		case any_representation::Trivial:
+			break;
 		}
 	}
 	any(any&& other) noexcept;
@@ -160,9 +154,25 @@ public:
 	const std::type_info& type() const noexcept;
 
 private:
-	std::variant<internal_storage_t, void*> _storage;
 	any_representation _representation;
 
+	union storage
+	{
+		struct big_storage
+		{
+			void* _big_storage = nullptr;
+			any_big* _big_handler;
+		}big_storage;
+
+		struct small_storage
+		{
+			typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
+			internal_storage_t _small_storage;
+			any_small* _small_handler;
+		}small_storage;
+	};
+
+	storage _storage;
 };
 
 template<class T, class... Args>
