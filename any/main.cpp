@@ -4,7 +4,7 @@
 
 struct S
 {
-	S(int v)
+	S(int v) noexcept
 	{
 		tt = v;
 	}
@@ -16,7 +16,8 @@ int main()
 {
 	testing::InitGoogleTest();
 	RUN_ALL_TESTS();
-	std::any a = 3;
 
+	any a(3);
+	std::any b(3);
 	return 0;
 }

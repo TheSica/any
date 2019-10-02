@@ -35,8 +35,6 @@ using any_is_small = std::bool_constant<sizeof(T) <= small_space_size
 
 typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
 
-
-
 enum class any_representation
 {
 	Big,
@@ -50,6 +48,7 @@ struct any_big
 	static void Destroy(void* target) noexcept
 	{
 		delete static_cast<T*>(target);
+		_aligned_free(target);
 	}
 
 	template<class T>
@@ -59,7 +58,7 @@ struct any_big
 	}
 
 	void (*_destroy)(void*);
-	void (*_copy)(const void*);
+	void* (*_copy)(const void*);
 };
 
 struct any_small
@@ -71,7 +70,7 @@ struct any_small
 	}
 
 	template<class T>
-	static void Copy(const void* destination, void* what)
+	static void Copy(const void* destination, const void* what)
 	{
 		Construct(*static_cast<T*>(destination), *static_cast<T*>(what));
 	}
@@ -83,8 +82,8 @@ struct any_small
 	}
 
 	void (*_destroy)(void*);
-	void (*_copy)(const void*);
-	void (*_move)(void*);
+	void (*_copy)(const void*, const void*);
+	void (*_move)(const void*, void*);
 };
 
 template<class T>
@@ -97,11 +96,12 @@ class any
 {
 public:
 	constexpr any() noexcept
-		:_storage{}
+		:_storage{},
+		_representation{}
 	{
 	}
 
-	any(const any& other)
+	any(const any& other) noexcept
 		:_storage{},
 		_representation{}
 	{
@@ -113,28 +113,80 @@ public:
 		switch (other._representation)
 		{
 		case any_representation::Big:
-			_storage = other._storage;
-			//other._storage.big_storage._big_handler->_copy;
+			_storage.big_storage.handler = other._storage.big_storage.handler;
+			_storage.big_storage.storage = other._storage.big_storage.handler->_copy(other._storage.big_storage.storage);
+			_representation = any_representation::Big;
 			break;
 		case any_representation::Small:
+			_storage.small_storage.handler = other._storage.small_storage.handler;
+			other._storage.small_storage.handler->_copy(&_storage.small_storage.storage, &other._storage.small_storage.storage);
+			_representation = any_representation::Small;
 			break;
 		case any_representation::Trivial:
+			_storage.trivial_storage = other._storage.trivial_storage;
+			_representation = any_representation::Trivial;
 			break;
 		}
 	}
-	any(any&& other) noexcept;
 
-	template<class T>
-	any(T&& value) = delete;
+	any(any&& other) noexcept
+		:_storage{},
+		_representation{}
+	{
+		if (!other.has_value())
+		{
+			return;
+		}
 
-	template<class T, class... Args>
-	explicit any(std::in_place_type_t<T>, Args&& ...) = delete;
+		switch (other._representation)
+		{
+		case any_representation::Big:
+			_storage.big_storage.handler = other._storage.big_storage.handler;
+			_storage.big_storage.storage = other._storage.big_storage.storage;
+			_representation = any_representation::Big;
+			break;
+		case any_representation::Small:
+			_storage.small_storage.handler = other._storage.small_storage.handler;
+			other._storage.small_storage.handler->_move(&_storage.small_storage.storage, &other._storage.small_storage.storage);
+			_representation = any_representation::Small;
+			break;
+		case any_representation::Trivial:
+			_storage.trivial_storage = other._storage.trivial_storage;
+			_representation = any_representation::Trivial;
+			break;
+		}
+	}
+
+	template<class T, std::enable_if_t<!std::is_same_v<std::decay_t<T>, any> // can use conjunction and negation for short circuit but it's too hard too read
+																			 && std::is_copy_constructible_v<std::decay_t<T>>>> // check if VT is a specialization of in_place_type_t
+	any(T&& value)
+	{
+		emplace<std::decay_t<T>>(std::forward<T>(value));
+	}
+
+	template<class T, class... Args, typename VT = std::decay_t<T>, typename = std::enable_if<std::is_copy_constructible_v<T>
+																						   && std::is_constructible_v<std::decay_t<T>, Args...>>>
+	explicit any(std::in_place_type_t<T> ip, Args&&... args)
+	{
+		emplace<VT>(std::forward<T>(args)...);
+	}
+
 	template<class T, class U, class...Args>
 	explicit any(std::in_place_type_t<T>, std::initializer_list<U>, Args&& ...) = delete; //might not do
 
 	~any()
 	{
-
+		switch (_representation)
+		{
+		case any_representation::Big:
+			_storage.big_storage.handler->_destroy(_storage.big_storage.storage);
+			break;
+		case any_representation::Small:
+			_storage.small_storage.handler->_destroy(&_storage.small_storage.storage);
+			break;
+		case any_representation::Trivial:
+			break;
+		}
 	}
 
 	any& operator=(const any& rhs);
@@ -153,19 +205,52 @@ public:
 	const std::type_info& type() const noexcept;
 
 private:
-	any_representation _representation;
+	template<class T, class... Args>
+	T& emplace(Args&&... args)
+	{
+		return emplace_impl<T>(any_is_trivial<T>{}, any_is_small<T>{}, std::forward<Args>(args)...);
+	}
+
+	template<class T, class... Args>
+	T& emplace_impl(std::true_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
+	{
+		// specialization for trivial any
+		Construct(static_cast<T&>(_storage.trivial_storage), std::forward<Args>(args)...);
+		_representation = any_representation::Trivial;
+		return static_cast<T&>(_storage.trivial_storage);
+	}
+
+	template<class T, class... Args>
+	T& emplace_impl(std::false_type, std::true_type, Args&&... args) // any_is_trivial, any_is_small
+	{
+		// specialization for small any
+		Construct(static_cast<T&>(_storage.small_storage.storage), std::forward<Args>(args)...);
+		_storage.small_storage.handler = &any_small_obj<T>;
+		_representation = any_representation::Small;
+		return static_cast<T&>(_storage.small_storage.storage);
+	}
+
+	template<class T, class... Args>
+	T& emplace_impl(std::false_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
+	{
+		_storage.big_storage.storage = _aligned_malloc(sizeof(T), alignof(T));
+		Construct(static_cast<T&>(_storage.big_storage.storage), std::forward<Args>(args)...);
+		_storage.big_storage.handler = &any_big_obj<T>;
+		_representation = any_representation::Trivial;
+		return static_cast<T&>(_storage.trivial_storage);
+	}
 
 	struct big_storage_t
 	{
-		void* _big_storage = nullptr;
-		any_big* _big_handler;
+		void* storage = nullptr;
+		any_big* handler;
 	};
 
 	typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
 	struct small_storage_t
 	{
-		internal_storage_t _small_storage;
-		any_small* _small_handler;
+		internal_storage_t storage;
+		any_small* handler;
 	};
 
 	struct storage
@@ -179,10 +264,11 @@ private:
 	};
 
 	storage _storage;
+	any_representation _representation;
 };
 
 template<class T, class... Args>
-void Construct(T& destination, Args&& ... args)
+void Construct(T& destination, Args&&... args)
 {
 	new(destination)T(std::forward<Args>(args)...);
 }
