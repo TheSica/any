@@ -26,12 +26,12 @@ constexpr size_t small_space_size = 4 * sizeof(void*);
 
 template<class T>
 using any_is_trivial = std::bool_constant<std::is_trivially_copyable_v<T> // Check if alignment is necessary
-	&& sizeof(T) <= small_space_size
-	&& alignof(T) <= alignof(void*)>;
+									   && sizeof(T) <= small_space_size
+									   && alignof(T) <= alignof(void*)>;
 
 template<class T>
 using any_is_small = std::bool_constant<sizeof(T) <= small_space_size
-	&& alignof(T) <= alignof(void*)>; // Check if alignment is necessary
+									 && alignof(T) <= alignof(void*)>; // Check if alignment is necessary
 
 typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
 
@@ -157,11 +157,11 @@ public:
 		}
 	}
 
-	template<class T, std::enable_if_t<!std::is_same_v<std::decay_t<T>, any> // can use conjunction and negation for short circuit but it's too hard too read
-																			 && std::is_copy_constructible_v<std::decay_t<T>>>> // check if VT is a specialization of in_place_type_t
+	template<class T, typename VT = std::decay_t<T>, typename = std::enable_if_t<!std::is_same_v<VT, any> // can use conjunction and negation for short circuit but it's too hard too 
+																			   && std::is_copy_constructible_v<VT>>> // check if VT is a specialization of in_place_type_t
 	any(T&& value)
 	{
-		emplace<std::decay_t<T>>(std::forward<T>(value));
+		emplace<VT>(std::forward<T>(value));
 	}
 
 	template<class T, class... Args, typename VT = std::decay_t<T>, typename = std::enable_if<std::is_copy_constructible_v<T>
@@ -195,7 +195,11 @@ public:
 	any& operator=(T&& rhs) = delete;
 
 	template<class T, class... Args>
-	std::decay_t<T>& emplace(Args&& ...) = delete;
+	std::decay_t<T>& emplace(Args&&... args)
+	{
+		return emplace_impl<T>(any_is_trivial<T>{}, any_is_small<T>{}, std::forward<Args>(args)...);
+	}
+
 	template<class T, class U, class... Args>
 	std::decay_t<T>& emplace(std::initializer_list<U>, Args&& ...) = delete;
 	void reset() noexcept = delete;
@@ -206,24 +210,18 @@ public:
 
 private:
 	template<class T, class... Args>
-	T& emplace(Args&&... args)
+	std::decay_t<T>& emplace_impl(std::true_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
 	{
-		return emplace_impl<T>(any_is_trivial<T>{}, any_is_small<T>{}, std::forward<Args>(args)...);
-	}
-
-	template<class T, class... Args>
-	T& emplace_impl(std::true_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
-	{
-		// specialization for trivial any
+		// trivial any
 		Construct(static_cast<T&>(_storage.trivial_storage), std::forward<Args>(args)...);
 		_representation = any_representation::Trivial;
 		return static_cast<T&>(_storage.trivial_storage);
 	}
 
 	template<class T, class... Args>
-	T& emplace_impl(std::false_type, std::true_type, Args&&... args) // any_is_trivial, any_is_small
+	std::decay_t<T>& emplace_impl(std::false_type, std::true_type, Args&&... args) // any_is_trivial, any_is_small
 	{
-		// specialization for small any
+		// small any
 		Construct(static_cast<T&>(_storage.small_storage.storage), std::forward<Args>(args)...);
 		_storage.small_storage.handler = &any_small_obj<T>;
 		_representation = any_representation::Small;
@@ -231,18 +229,19 @@ private:
 	}
 
 	template<class T, class... Args>
-	T& emplace_impl(std::false_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
+	std::decay_t<T>& emplace_impl(std::false_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
 	{
+		// big any
 		_storage.big_storage.storage = _aligned_malloc(sizeof(T), alignof(T));
 		Construct(static_cast<T&>(_storage.big_storage.storage), std::forward<Args>(args)...);
 		_storage.big_storage.handler = &any_big_obj<T>;
-		_representation = any_representation::Trivial;
-		return static_cast<T&>(_storage.trivial_storage);
+		_representation = any_representation::Big;
+		return static_cast<T&>(_storage.big_storage.storage);
 	}
 
 	struct big_storage_t
 	{
-		void* storage = nullptr;
+		void* storage;
 		any_big* handler;
 	};
 
@@ -270,5 +269,5 @@ private:
 template<class T, class... Args>
 void Construct(T& destination, Args&&... args)
 {
-	new(destination)T(std::forward<Args>(args)...);
+	new(destination) T(std::forward<Args>(args)...);
 }
