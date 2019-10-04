@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <any>
 #include "any.h"
-
+#include <typeinfo>
+#include <type_traits>
+#include <typeindex>
 struct S
 {
 	S(int v) noexcept
@@ -17,7 +19,5 @@ int main()
 	testing::InitGoogleTest();
 	RUN_ALL_TESTS();
 
-	any a(3);
-	std::any b(3);
 	return 0;
 }

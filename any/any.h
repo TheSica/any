@@ -13,6 +13,7 @@
 #include <initializer_list>
 #include <type_traits>
 #include <variant>
+#include "cppcorecheck\warnings.h"
 
 class bad_any_cast : public std::bad_cast
 {
@@ -25,72 +26,103 @@ class bad_any_cast : public std::bad_cast
 constexpr size_t small_space_size = 4 * sizeof(void*);
 
 template<class T>
-using any_is_trivial = std::bool_constant<std::is_trivially_copyable_v<T> // Check if alignment is necessary
-									   && sizeof(T) <= small_space_size
-									   && alignof(T) <= alignof(void*)>;
-
-template<class T>
-using any_is_small = std::bool_constant<sizeof(T) <= small_space_size
-									 && alignof(T) <= alignof(void*)>; // Check if alignment is necessary
-
-typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
+using any_is_small = std::bool_constant<std::is_trivially_copyable_v<T>
+									 && sizeof(T) <= small_space_size
+									 && alignof(T) <= alignof(void*)>; // Check if alignment shouldnt be % == 0
 
 enum class any_representation
 {
-	Big,
 	Small,
-	Trivial
+	Big,
 };
+
+template<class T, class... Args>
+void Construct(void* destination, Args&&... args) noexcept
+{
+	new(destination) T(std::forward<Args>(args)...);
+}
 
 struct any_big
 {
 	template <class T>
 	static void Destroy(void* target) noexcept
 	{
-		delete static_cast<T*>(target);
+		std::destroy_at<T>(static_cast<T*>(target));
+
 		_aligned_free(target);
 	}
 
 	template<class T>
 	static void* Copy(const void* source)
 	{
-		return new T(*static_cast<T*>(source));
+		return new T(*static_cast<const T*>(source));
+	}
+
+	template<class T>
+	static void* Type()
+	{
+		return (void*)&typeid(T);
 	}
 
 	void (*_destroy)(void*);
 	void* (*_copy)(const void*);
+	void* (*_type)();
 };
 
 struct any_small
 {
 	template <class T>
-	static void Destroy(void* target) noexcept
+	static void Destroy(void* target)
 	{
-		std::destroy_at<T>(target);
+		if constexpr (!std::is_trivially_copyable_v<T>)
+		{
+			std::destroy_at(static_cast<T*>(target));
+		}
 	}
 
 	template<class T>
-	static void Copy(const void* destination, const void* what)
+	static void Copy(void* destination, const void* what)
 	{
-		Construct(*static_cast<T*>(destination), *static_cast<T*>(what));
+		if constexpr (std::is_trivially_copyable_v<T>)
+		{
+			*static_cast<T*>(destination) = *static_cast<const T*>(what);
+		}
+		else
+		{
+			Construct(*static_cast<T*>(destination), *static_cast<const T*>(what));
+		}
 	}
 
 	template<class T>
-	static void Move(const void* destination, void* what)
+	static void Move(void* destination, void* what) noexcept
 	{
-		Construct(*static_cast<T*>(destination), std::move(*static_cast<T*>(what)));
+		if constexpr (std::is_trivially_copyable_v<T>)
+		{
+			*static_cast<T*>(destination) = *static_cast<T*>(what);
+		}
+		else
+		{
+			Construct(*static_cast<T*>(destination), std::move(*static_cast<T*>(what)));
+		}
+	}
+
+	template<class T>
+	static void* Type()
+	{
+		return (void*) & typeid(T);
 	}
 
 	void (*_destroy)(void*);
-	void (*_copy)(const void*, const void*);
-	void (*_move)(const void*, void*);
+	void (*_copy)(void*, const void*);
+	void (*_move)(void*, void*);
+	void* (*_type)();
 };
 
 template<class T>
-any_big any_big_obj = { &any_big::Destroy<T>, &any_big::Copy<T> };
+any_big any_big_obj = { &any_big::Destroy<T>, &any_big::Copy<T>, &any_big::Type<T> };
 
 template<class T>
-any_small any_small_obj = { &any_small::Destroy<T>, &any_small::Copy<T>, &any_small::Move<T> };
+any_small any_small_obj = { &any_small::Destroy<T>, &any_small::Copy<T>, &any_small::Move<T>, &any_small::Type<T> };
 
 class any
 {
@@ -122,10 +154,6 @@ public:
 			other._storage.small_storage.handler->_copy(&_storage.small_storage.storage, &other._storage.small_storage.storage);
 			_representation = any_representation::Small;
 			break;
-		case any_representation::Trivial:
-			_storage.trivial_storage = other._storage.trivial_storage;
-			_representation = any_representation::Trivial;
-			break;
 		}
 	}
 
@@ -150,10 +178,6 @@ public:
 			other._storage.small_storage.handler->_move(&_storage.small_storage.storage, &other._storage.small_storage.storage);
 			_representation = any_representation::Small;
 			break;
-		case any_representation::Trivial:
-			_storage.trivial_storage = other._storage.trivial_storage;
-			_representation = any_representation::Trivial;
-			break;
 		}
 	}
 
@@ -164,79 +188,157 @@ public:
 		emplace<VT>(std::forward<T>(value));
 	}
 
-	template<class T, class... Args, typename VT = std::decay_t<T>, typename = std::enable_if<std::is_copy_constructible_v<T>
-																						   && std::is_constructible_v<std::decay_t<T>, Args...>>>
-	explicit any(std::in_place_type_t<T> ip, Args&&... args)
+	template<class T, class... Args, typename VT = std::decay_t<T>, typename = std::enable_if<std::is_copy_constructible_v<VT>
+																						   && std::is_constructible_v<VT, Args...>>>
+	explicit any(std::in_place_type_t<T>, Args&&... args)
 	{
 		emplace<VT>(std::forward<T>(args)...);
 	}
 
-	template<class T, class U, class...Args>
-	explicit any(std::in_place_type_t<T>, std::initializer_list<U>, Args&& ...) = delete; //might not do
+	template<class T, class U, class...Args, typename VT = std::decay_t<T>, typename = std::enable_if_t<std::is_copy_constructible_v<VT> && 
+																										std::is_constructible_v<VT, std::initializer_list<U>&, Args...>>>
+	explicit any(std::in_place_type_t<T>, std::initializer_list<U> il, Args&&... args)
+	{
+		emplace<VT>(il, std::forward<Args>(args)...);
+	}
 
 	~any()
 	{
+		reset();
+	}
+	
+	any& operator=(const any& rhs)
+	{
+		any(rhs).swap(*this);
+
+		return *this;
+	}
+
+	any& operator=(any&& rhs) noexcept
+	{
+		any(std::move(rhs)).swap(*this);
+		return *this;
+	}
+
+	template<class T, typename VT = std::decay_t<T>, typename = std::enable_if_t<!std::is_same_v<VT, any>
+																				&& std::is_copy_constructible_v<VT>>>
+	any& operator=(T&& rhs)
+	{
+		any tmp(rhs);
+
+		tmp.swap(*this);
+
+		return *this;
+	}
+	
+	template<class T, class... Args>
+	std::decay_t<T>& emplace(Args&&... args)
+	{
+		return emplace_impl<T>(any_is_small<T>{}, std::forward<Args>(args)...);
+	}
+	
+	template<class T, class U, class... Args>
+	std::decay_t<T>& emplace(std::initializer_list<U>, Args&& ...) = delete;
+
+	void reset() noexcept
+	{
+		if (!has_value())
+		{
+			return;
+		}
+
 		switch (_representation)
 		{
 		case any_representation::Big:
 			_storage.big_storage.handler->_destroy(_storage.big_storage.storage);
+			_storage.big_storage.handler = nullptr;
 			break;
 		case any_representation::Small:
 			_storage.small_storage.handler->_destroy(&_storage.small_storage.storage);
-			break;
-		case any_representation::Trivial:
+			_storage.small_storage.handler = nullptr;
 			break;
 		}
 	}
 
-	any& operator=(const any& rhs);
-	any& operator=(any&& rhs) noexcept;
-	template<class T>
-	any& operator=(T&& rhs) = delete;
-
-	template<class T, class... Args>
-	std::decay_t<T>& emplace(Args&&... args)
+	void swap(any& rhs) noexcept
 	{
-		return emplace_impl<T>(any_is_trivial<T>{}, any_is_small<T>{}, std::forward<Args>(args)...);
+		any tmp;
+		tmp._storage = rhs._storage;
+		tmp._representation = rhs._representation;
+
+		rhs._storage = _storage;
+		rhs._representation = _representation;
+
+		_storage = tmp._storage;
+		_representation = tmp._representation;
 	}
 
-	template<class T, class U, class... Args>
-	std::decay_t<T>& emplace(std::initializer_list<U>, Args&& ...) = delete;
-	void reset() noexcept = delete;
-	void swap(any& rhs) noexcept = delete;
+	bool has_value() const noexcept
+	{
+		switch (_representation)
+		{
+		case any_representation::Big:
+			return _storage.big_storage.handler != nullptr;
+		case any_representation::Small:
+			return _storage.small_storage.handler != nullptr;
+		default:
+			return false;
+		}
+	}
+	const std::type_info& type() const noexcept
+	{
+		if (has_value())
+		{
+			switch (_representation)
+			{
+				case any_representation::Big:
+					return *static_cast<const std::type_info*>(_storage.big_storage.handler->_type());
+				case any_representation::Small:
+					return *static_cast<const std::type_info*>(_storage.small_storage.handler->_type());
+			}
+		}
+		else
+		{
+			return typeid(void);
+		}
+	}
 
-	bool has_value() const noexcept;
-	const std::type_info& type() const noexcept;
+	template<class T>
+	T* get_val() noexcept
+	{
+		return static_cast<T*>(get_val_impl(any_is_small<T>{}));
+	}
 
 private:
 	template<class T, class... Args>
-	std::decay_t<T>& emplace_impl(std::true_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
-	{
-		// trivial any
-		Construct(static_cast<T&>(_storage.trivial_storage), std::forward<Args>(args)...);
-		_representation = any_representation::Trivial;
-		return static_cast<T&>(_storage.trivial_storage);
-	}
-
-	template<class T, class... Args>
-	std::decay_t<T>& emplace_impl(std::false_type, std::true_type, Args&&... args) // any_is_trivial, any_is_small
+	std::decay_t<T>& emplace_impl(std::true_type, Args&&... args) // any_is_trivial, any_is_small
 	{
 		// small any
-		Construct(static_cast<T&>(_storage.small_storage.storage), std::forward<Args>(args)...);
 		_storage.small_storage.handler = &any_small_obj<T>;
+		Construct<T>(static_cast<void*>(&_storage.small_storage.storage), std::forward<Args>(args)...);
 		_representation = any_representation::Small;
-		return static_cast<T&>(_storage.small_storage.storage);
+		return reinterpret_cast<T&>(_storage.small_storage.storage);
 	}
 
 	template<class T, class... Args>
-	std::decay_t<T>& emplace_impl(std::false_type, std::false_type, Args&&... args) // any_is_trivial, any_is_small
+	std::decay_t<T>& emplace_impl(std::false_type, Args&&... args) // any_is_trivial, any_is_small
 	{
 		// big any
-		_storage.big_storage.storage = _aligned_malloc(sizeof(T), alignof(T));
-		Construct(static_cast<T&>(_storage.big_storage.storage), std::forward<Args>(args)...);
 		_storage.big_storage.handler = &any_big_obj<T>;
+		_storage.big_storage.storage = _aligned_malloc(sizeof(T), alignof(T));
+		Construct<T>(_storage.big_storage.storage, std::forward<Args>(args)...);
 		_representation = any_representation::Big;
-		return static_cast<T&>(_storage.big_storage.storage);
+		return reinterpret_cast<T&>(_storage.big_storage.storage);
+	}
+
+	void* get_val_impl(std::true_type) noexcept
+	{
+		return (static_cast<void*>(&_storage.small_storage.storage));
+	}
+
+	void* get_val_impl(std::false_type) noexcept
+	{
+		return (_storage.big_storage.storage);
 	}
 
 	struct big_storage_t
@@ -245,9 +347,9 @@ private:
 		any_big* handler;
 	};
 
-	typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
 	struct small_storage_t
 	{
+		typedef std::aligned_storage_t<small_space_size, std::alignment_of_v<void*>> internal_storage_t;
 		internal_storage_t storage;
 		any_small* handler;
 	};
@@ -256,18 +358,97 @@ private:
 	{
 		union
 		{
-			internal_storage_t trivial_storage;
-			big_storage_t big_storage;
 			small_storage_t small_storage;
+			big_storage_t big_storage;
 		};
+
+		std::type_info* _typeInfo;
 	};
 
 	storage _storage;
 	any_representation _representation;
 };
 
-template<class T, class... Args>
-void Construct(T& destination, Args&&... args)
+inline void swap(any& x, any& y) noexcept 
 {
-	new(destination) T(std::forward<Args>(args)...);
+	x.swap(y);
+}
+
+template<class T, class... Args>
+any make_any(Args&&... args)
+{
+	return any(std::in_place_type<T>, std::forward<Args>(args)...);
+}
+
+template<class T, class U, class... Args>
+any make_any(std::initializer_list<U> il, Args&&... args)
+{
+	return any(std::in_place_type<T>, il, std::forward<Args>(args)...);
+}
+
+template<class T>
+T any_cast(const any& operand)
+{
+	static_assert(std::is_constructible_v<T, const std::remove_cv_t<std::remove_reference_t<T>>&>);
+
+	const auto storagePtr = any_cast<std::remove_cv_t<std::remove_reference_t<T>>>(&operand);
+
+	if (!storagePtr)
+	{
+		throw bad_any_cast({});
+	}
+
+	return static_cast<T>(*storagePtr);
+}
+
+template<class T>
+T any_cast(any& operand)
+{
+	static_assert(std::is_constructible_v<T, std::remove_cv_t<std::remove_reference_t<T>>&>);
+
+	const auto storagePtr = any_cast<std::remove_cv_t<std::remove_reference_t<T>>>(&operand);
+
+	if (!storagePtr)
+	{
+		throw bad_any_cast({});
+	}
+
+	return static_cast<T>(*storagePtr);
+}
+
+template<class T>
+T any_cast(any&& operand)
+{
+	static_assert(std::is_constructible_v<T, std::remove_cv_t<std::remove_reference_t<T>>>);
+
+	const auto storagePtr = any_cast<std::remove_cv_t<std::remove_reference_t<T>>>(&operand);
+
+	if (!storagePtr)
+	{
+		throw bad_any_cast({});
+	}
+
+	return static_cast<T>(std::move(*storagePtr));
+}
+
+template<class T>
+const T* any_cast(const any* operand) noexcept
+{
+	if (operand != nullptr && operand->type() == typeid(T))
+	{
+		return /*const_cast*/ operand->get_val<T>();
+	}
+
+	return nullptr;
+}
+
+template<class T>
+T* any_cast(/*const*/ any* operand) noexcept
+{
+	if (operand != nullptr && operand->type() == typeid(T))
+	{
+		return /*const_cast*/ operand->get_val<T>();
+	}
+
+	return nullptr;
 }
