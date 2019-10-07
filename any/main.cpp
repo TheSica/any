@@ -6,18 +6,23 @@
 #include <typeindex>
 struct S
 {
-	S(int v) noexcept
+	S(std::string v)
 	{
-		tt = v;
+		tt  = v;
 	}
 
-	int tt = 0;
+	S(S&& v)
+	{
+	};
+
+	std::string tt;
 };
 
 int main()
 {
 	testing::InitGoogleTest();
 	RUN_ALL_TESTS();
+
 
 	return 0;
 }

@@ -7,13 +7,12 @@
 
 	In the 1st case, <any> will dynamically allocate memory on the heap for the object
 	In the 2nd case, <any> will store the object inside any itself
-	In the 3rd case, <any> will store the object inside any itself and no destructor shall be called for the object. Additionally, the copy and moves will also be treaded differently
+	In the 3rd case, <any> will store the object inside any itself and no destructor shall be called for the object. Additionally, the copy and moves will be treated differently
 */
+
 #include <utility>
 #include <initializer_list>
 #include <type_traits>
-#include <variant>
-#include "cppcorecheck\warnings.h"
 
 class bad_any_cast : public std::bad_cast
 {
@@ -23,10 +22,10 @@ class bad_any_cast : public std::bad_cast
 	}
 };
 
-constexpr size_t small_space_size = 4 * sizeof(void*);
+constexpr size_t small_space_size = 8 * sizeof(void*);
 
 template<class T>
-using any_is_small = std::bool_constant<std::is_trivially_copyable_v<T>
+using any_is_small = std::bool_constant<std::is_nothrow_move_constructible_v<T>
 									 && sizeof(T) <= small_space_size
 									 && alignof(T) <= alignof(void*)>; // Check if alignment shouldnt be % == 0
 
@@ -47,7 +46,7 @@ struct any_big
 	template <class T>
 	static void Destroy(void* target) noexcept
 	{
-		std::destroy_at<T>(static_cast<T*>(target));
+		std::destroy_at(static_cast<T*>(target));
 
 		_aligned_free(target);
 	}
@@ -89,7 +88,7 @@ struct any_small
 		}
 		else
 		{
-			Construct(*static_cast<T*>(destination), *static_cast<const T*>(what));
+			Construct<T>(static_cast<T*>(destination), *static_cast<const T*>(what));
 		}
 	}
 
@@ -102,7 +101,7 @@ struct any_small
 		}
 		else
 		{
-			Construct(*static_cast<T*>(destination), std::move(*static_cast<T*>(what)));
+			Construct<T>(static_cast<T*>(destination), std::move(*static_cast<T*>(what)));
 		}
 	}
 
@@ -231,14 +230,23 @@ public:
 		return *this;
 	}
 	
-	template<class T, class... Args>
+	template<class T, typename VT = std::decay_t<T>, class... Args, typename = std::enable_if_t<std::is_copy_constructible_v<VT>
+																							 && std::is_constructible_v<VT, Args...>>>
 	std::decay_t<T>& emplace(Args&&... args)
 	{
-		return emplace_impl<T>(any_is_small<T>{}, std::forward<Args>(args)...);
+		reset();
+
+		return emplace_impl<VT>(any_is_small<T>{}, std::forward<Args>(args)...);
 	}
 	
-	template<class T, class U, class... Args>
-	std::decay_t<T>& emplace(std::initializer_list<U>, Args&& ...) = delete;
+	template<class T, class U, typename VT = std::decay_t<T>, class... Args, typename = std::enable_if_t<std::is_copy_constructible_v<VT>
+																									  && std::is_constructible_v<VT,std::initializer_list<U>&, Args...>>>
+	std::decay_t<T>& emplace(std::initializer_list<U> il, Args&&... args)
+	{
+		reset();
+
+		return emplace_impl<VT>(any_is_small<T>{}, il, std::forward<Args>(args)...);
+	}
 
 	void reset() noexcept
 	{
@@ -377,13 +385,13 @@ inline void swap(any& x, any& y) noexcept
 template<class T, class... Args>
 any make_any(Args&&... args)
 {
-	return any(std::in_place_type<T>, std::forward<Args>(args)...);
+	return any{std::in_place_type<T>, std::forward<Args>(args)...};
 }
 
 template<class T, class U, class... Args>
 any make_any(std::initializer_list<U> il, Args&&... args)
 {
-	return any(std::in_place_type<T>, il, std::forward<Args>(args)...);
+	return make_any(il, std::forward<Args>(args));
 }
 
 template<class T>
