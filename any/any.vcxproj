@@ -150,7 +150,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="any.h" />
-    <ClInclude Include="anyold.h" />
     <ClInclude Include="TestObject.h" />
   </ItemGroup>
   <ItemGroup>

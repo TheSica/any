@@ -26,9 +26,6 @@
     <ClInclude Include="TestObject.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="anyold.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="any.h">
       <Filter>Header Files</Filter>
     </ClInclude>

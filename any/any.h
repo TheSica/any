@@ -29,14 +29,14 @@ using any_is_small = std::bool_constant<std::is_nothrow_move_constructible_v<T>
 									 && sizeof(T) <= small_space_size
 									 && alignof(T) <= alignof(void*)>; // Check if alignment shouldnt be % == 0
 
-enum class any_representation
+enum class any_representation : unsigned char
 {
 	Small,
 	Big,
 };
 
 template<class T, class... Args>
-void Construct(void* destination, Args&&... args) noexcept
+void Construct(void* destination, Args&&... args)
 {
 	new(destination) T(std::forward<Args>(args)...);
 }
@@ -223,7 +223,7 @@ public:
 																				&& std::is_copy_constructible_v<VT>>>
 	any& operator=(T&& rhs)
 	{
-		any tmp(rhs);
+		any tmp(std::forward<T>(rhs));
 
 		tmp.swap(*this);
 
@@ -235,7 +235,10 @@ public:
 	std::decay_t<T>& emplace(Args&&... args)
 	{
 		reset();
-
+		auto t = std::is_nothrow_move_constructible_v<T>;
+		auto s = sizeof(T);
+		auto a = alignof(T);
+		auto av = alignof(void*);
 		return emplace_impl<VT>(any_is_small<T>{}, std::forward<Args>(args)...);
 	}
 	
@@ -244,7 +247,9 @@ public:
 	std::decay_t<T>& emplace(std::initializer_list<U> il, Args&&... args)
 	{
 		reset();
-
+		auto t = std::is_nothrow_move_constructible_v<T>;
+		auto s = sizeof(T);
+		auto a = alignof(T);
 		return emplace_impl<VT>(any_is_small<T>{}, il, std::forward<Args>(args)...);
 	}
 
@@ -270,15 +275,8 @@ public:
 
 	void swap(any& rhs) noexcept
 	{
-		any tmp;
-		tmp._storage = rhs._storage;
-		tmp._representation = rhs._representation;
-
-		rhs._storage = _storage;
-		rhs._representation = _representation;
-
-		_storage = tmp._storage;
-		_representation = tmp._representation;
+		std::swap(_storage, rhs._storage);
+		std::swap(_representation, rhs._representation);
 	}
 
 	bool has_value() const noexcept
@@ -369,8 +367,6 @@ private:
 			small_storage_t small_storage;
 			big_storage_t big_storage;
 		};
-
-		std::type_info* _typeInfo;
 	};
 
 	storage _storage;
@@ -391,7 +387,7 @@ any make_any(Args&&... args)
 template<class T, class U, class... Args>
 any make_any(std::initializer_list<U> il, Args&&... args)
 {
-	return make_any(il, std::forward<Args>(args));
+	return make_any(il, std::forward<Args>(args)...);
 }
 
 template<class T>
