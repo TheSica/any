@@ -402,6 +402,42 @@ TEST(SwapTests, GivenNonEmptyAny_STDSwapWorksOnAny)
 	EXPECT_EQ(any_cast<int>(a2), 42);
 }
 
+TEST(SwapTests, GivenNonEmptyListAny_SwapWorksAsExpected)
+{
+	any a1 = std::list<int>{1, 2, 3};
+	any a2 = std::list<int>{4, 5, 6};
+
+	a1.swap(a2);
+
+	std::list<int> result = any_cast<const std::list<int>&>(a1);
+
+	EXPECT_TRUE((result == std::list<int>{4, 5, 6}));
+}
+
+TEST(SwapTests, GivenNonEmptyStringAny_SwapWorksAsExpected)
+{
+	any a1 = std::string("firstString");
+	any a2 = std::string("secondString");
+
+	a1.swap(a2);
+
+	std::string result = any_cast<const std::string&>(a1);
+
+	EXPECT_EQ(result, std::string("secondString"));
+}
+
+TEST(SwapTests, GivenNonEmptyTOList_SwapWorksAsExpected)
+{
+	any a1 = std::list<TestObject>{TestObject(1), TestObject(2), TestObject(3), TestObject(4), TestObject(5)};
+	any a2 = std::list<TestObject>{TestObject(6), TestObject(7), TestObject(8), TestObject(9), TestObject(10)};
+
+	a1.swap(a2);
+
+	auto result = any_cast<const std::list<TestObject>&>(a1);
+
+	EXPECT_TRUE((result == std::list<TestObject>{TestObject(6), TestObject(7), TestObject(8), TestObject(9), TestObject(10)}));
+}
+
 TEST(TypeInfoTests, GivenNonEmptyAnys_TypeInfoIsCorrect)
 {
 	EXPECT_EQ(std::strcmp(any(42).type().name(), "int"), 0);
