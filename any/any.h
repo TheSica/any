@@ -180,22 +180,22 @@ public:
 		}
 	}
 
-	template<class T, typename VT = std::decay_t<T>, typename = std::enable_if_t<!std::is_same_v<VT, any> // can use conjunction and negation for short circuit but it's too hard too 
-																			   && std::is_copy_constructible_v<VT>>> // check if VT is a specialization of in_place_type_t
+	template<class T, typename VT = std::decay_t<T>, typename = std::enable_if_t<!std::is_same_v<VT, any> // can use conjunction and negation for short circuit but it's too hard to read
+										   && std::is_copy_constructible_v<VT>>> // check if VT is a specialization of in_place_type_t
 	any(T&& value)
 	{
 		emplace<VT>(std::forward<T>(value));
 	}
 
 	template<class T, class... Args, typename VT = std::decay_t<T>, typename = std::enable_if<std::is_copy_constructible_v<VT>
-																						   && std::is_constructible_v<VT, Args...>>>
+											       && std::is_constructible_v<VT, Args...>>>
 	explicit any(std::in_place_type_t<T>, Args&&... args)
 	{
 		emplace<VT>(std::forward<T>(args)...);
 	}
 
-	template<class T, class U, class...Args, typename VT = std::decay_t<T>, typename = std::enable_if_t<std::is_copy_constructible_v<VT> && 
-																										std::is_constructible_v<VT, std::initializer_list<U>&, Args...>>>
+	template<class T, class U, class...Args, typename VT = std::decay_t<T>, typename = std::enable_if_t<std::is_copy_constructible_v<VT> 
+													 && std::is_constructible_v<VT, std::initializer_list<U>&, Args...>>>
 	explicit any(std::in_place_type_t<T>, std::initializer_list<U> il, Args&&... args)
 	{
 		emplace<VT>(il, std::forward<Args>(args)...);
@@ -220,7 +220,7 @@ public:
 	}
 
 	template<class T, typename VT = std::decay_t<T>, typename = std::enable_if_t<!std::is_same_v<VT, any>
-																				&& std::is_copy_constructible_v<VT>>>
+										   && std::is_copy_constructible_v<VT>>>
 	any& operator=(T&& rhs)
 	{
 		any tmp(std::forward<T>(rhs));
@@ -231,7 +231,7 @@ public:
 	}
 	
 	template<class T, typename VT = std::decay_t<T>, class... Args, typename = std::enable_if_t<std::is_copy_constructible_v<VT>
-																							 && std::is_constructible_v<VT, Args...>>>
+												 && std::is_constructible_v<VT, Args...>>>
 	std::decay_t<T>& emplace(Args&&... args)
 	{
 		reset();
@@ -243,7 +243,7 @@ public:
 	}
 	
 	template<class T, class U, typename VT = std::decay_t<T>, class... Args, typename = std::enable_if_t<std::is_copy_constructible_v<VT>
-																									  && std::is_constructible_v<VT,std::initializer_list<U>&, Args...>>>
+													  && std::is_constructible_v<VT,std::initializer_list<U>&, Args...>>>
 	std::decay_t<T>& emplace(std::initializer_list<U> il, Args&&... args)
 	{
 		reset();
